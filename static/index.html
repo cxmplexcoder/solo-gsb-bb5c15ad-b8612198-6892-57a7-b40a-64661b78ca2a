@@ -93,6 +93,19 @@
 
         <div id="exemption-bar" class="exemption-bar hidden"></div>
 
+        <!-- 组件可达性审计 -->
+        <section id="reachability-panel" class="reachability-panel hidden">
+          <div class="reach-head">
+            <h3>🧭 组件可达性审计</h3>
+            <span id="reach-summary" class="reach-summary"></span>
+          </div>
+          <p class="result-meta">
+            从 paths / webhooks 实际入口出发，沿本地 $ref 传递追踪 components（循环引用只访问一次）；
+            全局与操作级 security 按名称引用的 securitySchemes 也算可达。点击组件条目可定位到对应版本的引用树。
+          </p>
+          <div id="reach-body" class="reach-columns"></div>
+        </section>
+
         <div class="filters">
           <div class="filter-group" id="severity-filters">
             <button class="chip active" data-severity="all">全部 <span class="count" data-count="all">0</span></button>

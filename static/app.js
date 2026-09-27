@@ -195,6 +195,7 @@
 
     renderStats();
     renderExemptionBar();
+    loadReachability();
     $("#api-id-input").value = r.api_id || "";
     populateCategoryFilter();
     bindFiltersOnce();
@@ -355,6 +356,90 @@
     } catch (err) {
       showError(`撤销豁免失败：${err.message}`);
     }
+  }
+
+  // ------------------------------------------------------------------ //
+  // 组件可达性审计（未触达组件 / 新版独有 / 无效本地引用）
+  // ------------------------------------------------------------------ //
+  async function loadReachability() {
+    const panel = $("#reachability-panel");
+    if (!state.review || !state.review.id) {
+      panel.classList.add("hidden");
+      return;
+    }
+    const rid = state.review.id;
+    panel.classList.remove("hidden");
+    const body = $("#reach-body");
+    body.innerHTML = '<div class="empty-hint">正在审计组件可达性…</div>';
+    $("#reach-summary").textContent = "";
+    try {
+      const resp = await fetch(`/api/reviews/${rid}/reachability`);
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
+      // 审查已切换时丢弃迟到结果
+      if (!state.review || state.review.id !== rid) return;
+      renderReachability(data);
+    } catch (err) {
+      body.innerHTML =
+        `<div class="empty-hint">可达性审计加载失败：${escapeHtml(err.message)}</div>`;
+    }
+  }
+
+  function renderReachability(data) {
+    const s = data.summary || {};
+    const parts = [
+      `旧版未触达 ${s.old_unreachable ?? 0} · 新版未触达 ${s.new_unreachable ?? 0}`,
+    ];
+    if (s.new_only) parts.push(`其中新版独有 ${s.new_only} 个`);
+    if (s.old_broken_refs || s.new_broken_refs) {
+      parts.push(
+        `⚠️ 无效本地引用：旧版 ${s.old_broken_refs || 0} 条 / 新版 ${s.new_broken_refs || 0} 条`);
+    }
+    $("#reach-summary").textContent = parts.join("；");
+
+    const body = $("#reach-body");
+    body.innerHTML =
+      reachSideHtml("old", "旧版", data.old || {}) +
+      reachSideHtml("new", "新版", data.new || {});
+    body.querySelectorAll("[data-reach-pointer]").forEach((el) => {
+      el.addEventListener("click", () => {
+        jumpToRef(null, el.dataset.reachSide, el.dataset.reachPointer);
+        $(".tree-col").scrollIntoView({ block: "start", behavior: "smooth" });
+      });
+    });
+  }
+
+  function reachSideHtml(side, label, d) {
+    const broken = d.broken_refs || [];
+    const unreachable = d.unreachable || [];
+    let html = `<div class="reach-col ${side}">`;
+    html += `<div class="reach-col-head">${label} · 未触达组件 <b>${d.unreachable_count ?? 0}</b> 个` +
+      `<span class="reach-reachable">（入口可达 ${d.reachable_count ?? 0} 个）</span></div>`;
+
+    if (broken.length) {
+      html += `<details class="reach-broken"><summary>⚠️ 无效本地引用 ${broken.length} 条（不计入可达）</summary>` +
+        broken.map((b) => `<div class="reach-broken-item">
+          <code class="reach-at">${escapeHtml(b.at)}</code> → <code>${escapeHtml(b.ref)}</code>
+          <div class="reach-reason">${escapeHtml(b.reason)}</div>
+        </div>`).join("") + `</details>`;
+    }
+
+    if (!unreachable.length) {
+      html += `<div class="reach-ok">✅ 全部组件均可从入口触达</div>`;
+    } else {
+      const sections = {};
+      unreachable.forEach((it) => { (sections[it.section] ||= []).push(it); });
+      html += Object.entries(sections).map(([sec, items]) => `
+        <div class="reach-section">
+          <div class="reach-sec-head"><code>${escapeHtml(sec)}</code> × ${items.length}</div>
+          <div class="reach-items">
+            ${items.map((it) => `<button class="reach-item${it.new_only ? " new-only" : ""}"
+              data-reach-side="${side}" data-reach-pointer="${escapeAttr(it.pointer)}"
+              title="在${label}引用树中定位 ${escapeAttr(it.pointer)}">${escapeHtml(it.name)}${it.new_only ? '<span class="reach-badge">新版独有</span>' : ""}</button>`).join("")}
+          </div>
+        </div>`).join("");
+    }
+    return html + "</div>";
   }
 
   function populateCategoryFilter() {
@@ -893,7 +978,7 @@
     await loadPointers();
 
     // 优先选目标所在的顶层组件分组（树更小、可读性好），否则从根展开
-    const m = normPointer.match(/^(\/components\/(?:schemas|parameters|requestBodies|responses|headers)\/[^/]+)/);
+    const m = normPointer.match(/^(\/components\/[^/]+\/[^/]+)/);
     const rootPick = m ? m[1] : "";
     $("#tree-pointer").value = rootPick;
     state.tree.pointer = rootPick;

@@ -1,4 +1,4 @@
-"""FastAPI 入口：审查、历史、引用展开树、根因聚合、破坏项对账、限时豁免、报告下载、最小复现包导出。"""
+"""FastAPI 入口：审查、历史、引用展开树、根因聚合、破坏项对账、组件可达性审计、限时豁免、报告下载、最小复现包导出。"""
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import database, exemptions, groups, reconcile, reports, repro
+from . import database, exemptions, groups, reachability, reconcile, reports, repro
 from .diff import BREAKING, run_diff, summarize
 from .parser import SpecParseError, load_spec
 from .refs import build_ref_tree, expand_path_to_pointer, list_root_pointers
@@ -272,6 +272,27 @@ def reconcile_review(review_id: int, baseline_id: int) -> dict[str, Any]:
     result = reconcile.build_reconciliation(baseline["findings"], current["findings"])
     result["current"] = _review_brief(current)
     result["baseline"] = _review_brief(baseline)
+    return result
+
+
+# ---------------------------------------------------------------------- #
+# 组件可达性审计（paths / webhooks 入口 → 本地 $ref 传递追踪）
+# ---------------------------------------------------------------------- #
+@app.get("/api/reviews/{review_id}/reachability")
+def get_reachability(review_id: int) -> dict[str, Any]:
+    """组件可达性审计：分别对旧版、新版文档从 paths / webhooks 入口出发，
+    沿本地 $ref 传递追踪 components（循环引用只访问一次），全局与操作级
+    security 按名称引用的 securitySchemes 也算可达。
+
+    返回各侧未被入口触达的组件（类型 / 名称 / 数量）、新版独有的未使用
+    组件标记，以及无效本地引用明细（位置与原因）。实时计算，无额外存储。
+    """
+    specs = database.get_specs(review_id)
+    if specs is None:
+        raise HTTPException(status_code=404, detail="审查记录不存在")
+    old_doc, new_doc = specs
+    result = reachability.build_reachability(old_doc, new_doc)
+    result["review_id"] = review_id
     return result
 
 

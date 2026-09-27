@@ -428,7 +428,7 @@ def _render_scalar(value: Any) -> str:
 
 
 def list_root_pointers(doc: dict[str, Any]) -> list[dict[str, Any]]:
-    """供前端"选择根节点"使用：列出 paths / components.schemas 等。"""
+    """供前端"选择根节点"使用：列出 paths / components 各类型分组。"""
     groups: list[dict[str, Any]] = []
 
     if isinstance(doc.get("paths"), dict):
@@ -442,7 +442,16 @@ def list_root_pointers(doc: dict[str, Any]) -> list[dict[str, Any]]:
 
     comps = doc.get("components")
     if isinstance(comps, dict):
-        for section in ("schemas", "parameters", "requestBodies", "responses", "headers"):
+        # 已知类型优先，其余（含 3.1 新增类型）按文档顺序补充；跳过 x- 扩展
+        known = [
+            "schemas", "parameters", "requestBodies", "responses", "headers",
+            "securitySchemes", "examples", "callbacks", "links", "pathItems",
+        ]
+        ordered = [s for s in known if s in comps] + [
+            k for k in comps
+            if k not in known and isinstance(k, str) and not k.startswith("x-")
+        ]
+        for section in ordered:
             holder = comps.get(section)
             if isinstance(holder, dict) and holder:
                 groups.append({

@@ -728,6 +728,103 @@ input[type="search"] { min-width: 220px; }
 .rec-jump:hover { border-color: var(--accent); color: #79a8ff; }
 .rec-empty { color: var(--text-faint); font-size: 12.5px; text-align: center; padding: 14px 0; }
 
+/* ---------------- 组件可达性审计 ---------------- */
+.reachability-panel {
+  background: var(--bg-pane);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 18px;
+  margin-bottom: 16px;
+}
+.reach-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.reach-head h3 { font-size: 14.5px; }
+.reach-summary { color: var(--text-dim); font-size: 12.5px; }
+.reachability-panel .result-meta { margin: 6px 0 0; }
+
+.reach-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 12px;
+  align-items: start;
+}
+.reach-col {
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  min-width: 0;
+}
+.reach-col.old { border-left: 3px solid var(--warn); }
+.reach-col.new { border-left: 3px solid var(--ok); }
+.reach-col-head { font-size: 13px; font-weight: 650; margin-bottom: 8px; }
+.reach-col-head b { font-family: var(--mono); }
+.reach-reachable { color: var(--text-faint); font-size: 11.5px; font-weight: 400; margin-left: 4px; }
+.reach-ok { color: var(--ok); font-size: 12.5px; padding: 6px 0; }
+
+.reach-section { margin-bottom: 10px; }
+.reach-section:last-child { margin-bottom: 0; }
+.reach-sec-head { font-size: 12px; color: var(--text-dim); margin-bottom: 5px; }
+.reach-sec-head code {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: #a9c4ff;
+  background: rgba(79,140,255,.1);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+.reach-items { display: flex; flex-wrap: wrap; gap: 6px; }
+.reach-item {
+  background: var(--bg-pane);
+  border: 1px solid var(--border-soft);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 2px 9px;
+  font-size: 12px;
+  font-family: var(--mono);
+  cursor: pointer;
+  transition: all .15s;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.reach-item:hover { border-color: var(--accent); color: #79a8ff; }
+.reach-item.new-only { border-color: rgba(251,191,36,.45); }
+.reach-item.new-only:hover { border-color: var(--warn); }
+.reach-badge {
+  font-size: 10px;
+  font-family: var(--sans);
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-weight: 650;
+}
+
+.reach-broken {
+  border: 1px solid rgba(255,93,108,.35);
+  background: var(--breaking-soft);
+  border-radius: 8px;
+  padding: 6px 10px;
+  margin-bottom: 10px;
+  font-size: 12px;
+}
+.reach-broken summary { cursor: pointer; color: var(--breaking); font-weight: 600; }
+.reach-broken-item {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
+  word-break: break-all;
+}
+.reach-broken-item code {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: #a9c4ff;
+}
+.reach-broken-item code.reach-at { color: var(--text-dim); }
+.reach-reason { color: var(--breaking); font-size: 11.5px; margin-top: 2px; }
+
+
 /* 跳转定位后的目标发现高亮闪烁 */
 @keyframes rec-flash {
   0%, 100% { box-shadow: none; }
@@ -921,5 +1018,6 @@ input[type="search"] { min-width: 220px; }
   .stat-cards { grid-template-columns: repeat(2, 1fr); }
   .reconcile-columns { grid-template-columns: 1fr; }
   .reconcile-summary { grid-template-columns: 1fr; }
+  .reach-columns { grid-template-columns: 1fr; }
   .verdict { margin-left: 0; }
 }
