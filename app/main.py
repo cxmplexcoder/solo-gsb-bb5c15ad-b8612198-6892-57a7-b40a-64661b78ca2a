@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import database, exemptions, groups, reconcile, reports, repro
+from . import database, exemptions, groups, reachability, reconcile, reports, repro
 from .diff import BREAKING, run_diff, summarize
 from .parser import SpecParseError, load_spec
 from .refs import build_ref_tree, expand_path_to_pointer, list_root_pointers
@@ -273,6 +273,23 @@ def reconcile_review(review_id: int, baseline_id: int) -> dict[str, Any]:
     result["current"] = _review_brief(current)
     result["baseline"] = _review_brief(baseline)
     return result
+
+
+# ---------------------------------------------------------------------- #
+# 组件可达性审计（paths/webhooks 入口 → 传递 $ref / security 名称追踪）
+# ---------------------------------------------------------------------- #
+@app.get("/api/reviews/{review_id}/reachability")
+def get_review_reachability(review_id: int) -> dict[str, Any]:
+    """对已保存的旧/新文档分别审计组件可达性，标出新版独有的未使用组件。
+
+    纯函数实时计算（不额外存储）；无效本地引用在结果 invalid_refs 中
+    按来源位置逐条给出。
+    """
+    specs = database.get_specs(review_id)
+    if specs is None:
+        raise HTTPException(status_code=404, detail="审查记录不存在")
+    old_doc, new_doc = specs
+    return reachability.build_reachability_report(review_id, old_doc, new_doc)
 
 
 # ---------------------------------------------------------------------- #

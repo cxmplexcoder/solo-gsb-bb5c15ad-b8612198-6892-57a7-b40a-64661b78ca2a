@@ -34,6 +34,20 @@ SCHEMA_KEYS_MAP = {
 OPERATION_KEYS = ("get", "put", "post", "delete", "patch", "options", "head", "trace")
 PARAMETER_LOCATIONS = ("query", "header", "path", "cookie")
 
+# OpenAPI 3.x components 下的全部固定组件类型
+COMPONENT_SECTIONS = (
+    "schemas",
+    "responses",
+    "parameters",
+    "examples",
+    "requestBodies",
+    "headers",
+    "securitySchemes",
+    "links",
+    "callbacks",
+    "pathItems",
+)
+
 MAX_TREE_NODES = 6000  # 超大文档的展开预算，防止恶意/异常文档耗尽资源
 
 
@@ -428,7 +442,7 @@ def _render_scalar(value: Any) -> str:
 
 
 def list_root_pointers(doc: dict[str, Any]) -> list[dict[str, Any]]:
-    """供前端"选择根节点"使用：列出 paths / components.schemas 等。"""
+    """供前端"选择根节点"使用：列出 paths / webhooks / components 各分组。"""
     groups: list[dict[str, Any]] = []
 
     if isinstance(doc.get("paths"), dict):
@@ -440,9 +454,18 @@ def list_root_pointers(doc: dict[str, Any]) -> list[dict[str, Any]]:
             ],
         })
 
+    if isinstance(doc.get("webhooks"), dict):
+        groups.append({
+            "group": "webhooks",
+            "items": [
+                {"label": name, "pointer": f"/webhooks/{encode_token(name)}"}
+                for name in doc["webhooks"]
+            ],
+        })
+
     comps = doc.get("components")
     if isinstance(comps, dict):
-        for section in ("schemas", "parameters", "requestBodies", "responses", "headers"):
+        for section in COMPONENT_SECTIONS:
             holder = comps.get(section)
             if isinstance(holder, dict) and holder:
                 groups.append({

@@ -93,6 +93,17 @@
 
         <div id="exemption-bar" class="exemption-bar hidden"></div>
 
+        <!-- 组件可达性审计 -->
+        <div id="reachability-panel" class="reach-panel hidden">
+          <div class="reach-head" id="reach-head" role="button" tabindex="0"
+               title="从 paths / webhooks 实际入口出发，沿本地 $ref 与 security 名称传递追踪，找出未被入口触达的组件">
+            <span class="reach-toggle" id="reach-toggle">▸</span>
+            <h3>🧭 组件可达性审计</h3>
+            <span id="reach-summary" class="reach-summary"></span>
+          </div>
+          <div id="reach-body" class="reach-body hidden"></div>
+        </div>
+
         <div class="filters">
           <div class="filter-group" id="severity-filters">
             <button class="chip active" data-severity="all">全部 <span class="count" data-count="all">0</span></button>

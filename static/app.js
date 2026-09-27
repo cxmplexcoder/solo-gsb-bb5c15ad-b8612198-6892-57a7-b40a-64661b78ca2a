@@ -15,6 +15,9 @@
     groupsMeta: null,
     groupsPromise: null,   // 进行中的聚合请求（防重复拉取）
     reconcile: null,       // 最近一次破坏项对账结果
+    reachability: null,    // 组件可达性审计结果缓存（按当前审查）
+    reachabilityPromise: null,
+    reachOpen: false,      // 可达性审计面板是否展开
   };
 
   const SEV_LABEL = {
@@ -42,6 +45,16 @@
     active: "🛡️ 已豁免",
     expired: "⏰ 豁免过期",
     revoked: "🚫 豁免撤销",
+  };
+  // 组件可达性审计：组件类型顺序与状态徽标
+  const REACH_SECTIONS = [
+    "schemas", "responses", "parameters", "examples", "requestBodies",
+    "headers", "securitySchemes", "links", "callbacks", "pathItems",
+  ];
+  const REACH_STATUS = {
+    new_only: { label: "新版独有", title: "该组件仅存在于新版，且未被任何入口触达" },
+    regressed: { label: "新版退化", title: "旧版中可达，新版中变为未使用" },
+    both: { label: "两版均未用", title: "该组件在新旧两版中都未被入口触达" },
   };
 
   // ------------------------------------------------------------------ //
@@ -195,6 +208,14 @@
 
     renderStats();
     renderExemptionBar();
+    // 可达性审计随审查重置并后台计算（面板默认折叠）
+    state.reachability = null;
+    state.reachabilityPromise = null;
+    state.reachOpen = false;
+    $("#reach-toggle").textContent = "▸";
+    $("#reach-body").classList.add("hidden");
+    $("#reach-body").innerHTML = "";
+    loadReachability();
     $("#api-id-input").value = r.api_id || "";
     populateCategoryFilter();
     bindFiltersOnce();
@@ -354,6 +375,203 @@
       applyReviewUpdate(data);
     } catch (err) {
       showError(`撤销豁免失败：${err.message}`);
+    }
+  }
+
+  // ------------------------------------------------------------------ //
+  // 组件可达性审计（paths/webhooks 入口 → $ref / security 名称传递追踪）
+  // ------------------------------------------------------------------ //
+  async function loadReachability() {
+    if (!state.review || !state.review.id) return;
+    $("#reachability-panel").classList.remove("hidden");
+    $("#reach-summary").textContent = "可达性审计计算中…";
+    $("#reach-summary").classList.remove("has-invalid");
+    const rid = state.review.id;
+    state.reachabilityPromise = fetch(`/api/reviews/${rid}/reachability`)
+      .then(async (resp) => {
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
+        // 审查已切换时丢弃迟到结果
+        if (state.review && state.review.id === rid) {
+          state.reachability = data;
+          renderReachabilitySummary();
+          if (state.reachOpen) renderReachabilityBody();
+        }
+      })
+      .catch((err) => {
+        if (state.review && state.review.id === rid) {
+          $("#reach-summary").textContent = `可达性审计失败：${err.message}`;
+        }
+      })
+      .finally(() => { state.reachabilityPromise = null; });
+  }
+
+  function renderReachabilitySummary() {
+    const el = $("#reach-summary");
+    const r = state.reachability;
+    if (!r) return;
+    const s = r.summary;
+    const bits = [
+      `旧版未使用 ${s.old_unreachable}`,
+      `新版未使用 ${s.new_unreachable}`,
+    ];
+    if (s.new_only_unreachable) bits.push(`🆕 新版独有 ${s.new_only_unreachable}`);
+    const invalid = s.old_invalid_refs + s.new_invalid_refs;
+    if (invalid) bits.push(`⚠️ 无效引用 ${invalid}`);
+    el.textContent = bits.join(" · ");
+    el.classList.toggle("has-invalid", invalid > 0);
+  }
+
+  function toggleReachPanel() {
+    state.reachOpen = !state.reachOpen;
+    $("#reach-toggle").textContent = state.reachOpen ? "▾" : "▸";
+    $("#reach-body").classList.toggle("hidden", !state.reachOpen);
+    if (state.reachOpen) renderReachabilityBody();
+  }
+
+  $("#reach-head").addEventListener("click", toggleReachPanel);
+  $("#reach-head").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      toggleReachPanel();
+    }
+  });
+
+  function renderReachabilityBody() {
+    const body = $("#reach-body");
+    const r = state.reachability;
+    if (!r) {
+      body.innerHTML = state.reachabilityPromise
+        ? '<div class="empty-hint">正在计算可达性审计…</div>'
+        : '<div class="empty-hint">可达性审计不可用，请刷新或重新打开审查。</div>';
+      return;
+    }
+    body.innerHTML =
+      reachExplainHtml(r) +
+      reachWarningsHtml("old", r.old) +
+      reachWarningsHtml("new", r.new) +
+      `<div class="reach-columns">` +
+      reachSideHtml("old", r.old) +
+      reachSideHtml("new", r.new) +
+      `</div>`;
+    bindReachJumps(body);
+  }
+
+  function reachExplainHtml(r) {
+    const o = r.old, n = r.new;
+    let html = `<p class="reach-explain">从 <b>paths</b>（旧 ${o.entry_points.paths} / 新 ${n.entry_points.paths} 条）与 <b>webhooks</b>（旧 ${o.entry_points.webhooks} / 新 ${n.entry_points.webhooks} 条）实际入口出发，沿本地 <code>$ref</code> 传递追踪 components（循环引用只访问一次）；全局与操作级 security 按名称引用的 securitySchemes 同样计入可达。点击条目可在右侧引用树中定位。</p>`;
+    if (o.truncated || n.truncated) {
+      html += `<p class="reach-truncated">⚠️ 文档过大，遍历已按预算截断，统计可能不完整。</p>`;
+    }
+    html += `<p class="reach-legend">新版条目状态：` +
+      Object.keys(REACH_STATUS).map((k) =>
+        `<span class="reach-status ${k}" title="${escapeAttr(REACH_STATUS[k].title)}">${REACH_STATUS[k].label}</span>`
+      ).join(" ") + `</p>`;
+    return html;
+  }
+
+  function reachWarningsHtml(side, data) {
+    const sideCn = side === "old" ? "旧版" : "新版";
+    let html = "";
+    if (data.invalid_refs.length) {
+      const more = data.invalid_refs_truncated
+        ? `（仅显示前 ${data.invalid_refs.length} 条）` : "";
+      html += `<div class="reach-warn invalid"><div class="reach-warn-title">⚠️ ${sideCn}存在 ${data.invalid_refs_total} 处无效本地引用，追踪已跳过这些分支${more}</div>` +
+        data.invalid_refs.map((it) => {
+          const where = it.kind === "security"
+            ? (it.scope === "global" ? "全局 security" : `操作级 security（${escapeHtml(it.source)}）`)
+            : `来源 <code>${escapeHtml(it.source)}</code>`;
+          const refBit = it.kind === "ref" ? ` · 引用 <code>${escapeHtml(it.ref)}</code>` : "";
+          const jump = it.source
+            ? ` data-reach-jump="${escapeAttr(it.source)}" data-reach-side="${side}"` : "";
+          return `<div class="reach-warn-item"${jump}>` +
+            `<span class="reach-warn-msg">${escapeHtml(it.reason)}</span>` +
+            `<span class="reach-warn-loc">${where}${refBit}</span></div>`;
+        }).join("") + "</div>";
+    }
+    if (data.external_refs.length) {
+      const more = data.external_refs_truncated
+        ? `（仅显示前 ${data.external_refs.length} 条）` : "";
+      html += `<div class="reach-warn external"><div class="reach-warn-title">ℹ️ ${sideCn}存在 ${data.external_refs_total} 处外部引用，本工具不解析外部文件，未纳入可达性统计${more}</div>` +
+        data.external_refs.map((it) =>
+          `<div class="reach-warn-item" data-reach-jump="${escapeAttr(it.source)}" data-reach-side="${side}">` +
+          `<code>${escapeHtml(it.ref)}</code>` +
+          `<span class="reach-warn-loc">来源 <code>${escapeHtml(it.source)}</code></span></div>`
+        ).join("") + "</div>";
+    }
+    return html;
+  }
+
+  function reachSideHtml(side, data) {
+    const sideCn = side === "old" ? "旧版" : "新版";
+    const isNew = side === "new";
+    let inner = "";
+    if (!data.unreachable_total) {
+      inner = `<div class="reach-all-ok">✅ 全部已声明组件均可达（声明 ${data.declared_total} · 可达 ${data.reachable_total}）</div>`;
+    } else {
+      inner += `<div class="reach-counts">声明 ${data.declared_total} · 可达 ${data.reachable_total} · <b>未使用 ${data.unreachable_total}</b></div>`;
+      const bySection = {};
+      data.unreachable.forEach((item) => {
+        (bySection[item.type] = bySection[item.type] || []).push(item);
+      });
+      inner += REACH_SECTIONS.filter((sec) => bySection[sec]).map((sec) => `
+        <div class="reach-section">
+          <div class="reach-section-head">${sec} <span class="reach-n">${bySection[sec].length}</span></div>
+          <div class="reach-chips">
+            ${bySection[sec].map((item) => {
+              const st = isNew ? REACH_STATUS[item.status] : null;
+              return `<button class="reach-chip" data-reach-jump="${escapeAttr(item.pointer)}" data-reach-side="${side}"
+                title="${escapeAttr(item.pointer)}${st ? " · " + escapeAttr(st.title) : ""}">${escapeHtml(item.name)}${st ? ` <span class="reach-status ${item.status}">${st.label}</span>` : ""}</button>`;
+            }).join("")}
+          </div>
+        </div>`).join("");
+    }
+    // security 名称引用关系（securitySchemes 声明或实际被引用时展示）
+    const declaredSchemes = (data.declared && data.declared.securitySchemes) || [];
+    if (data.security_refs.length || declaredSchemes.length) {
+      inner += `<div class="reach-section security">
+        <div class="reach-section-head">security 名称引用</div>` +
+        (data.security_refs.length
+          ? data.security_refs.map((s) => `
+            <div class="reach-sec-row">
+              <button class="reach-chip ok" data-reach-jump="${escapeAttr(s.pointer)}" data-reach-side="${side}"
+                title="${escapeAttr(s.pointer)}">${escapeHtml(s.name)}</button>
+              <span class="reach-sec-scope">${s.scope === "global" ? "全局 security" : `操作级 · ${escapeHtml(s.source)}`}</span>
+            </div>`).join("")
+          : `<div class="reach-sec-none">未配置 security 要求</div>`) +
+        `</div>`;
+    }
+    return `<div class="reach-side">
+      <div class="reach-side-title">${sideCn}</div>
+      ${inner}
+    </div>`;
+  }
+
+  function bindReachJumps(root) {
+    root.querySelectorAll("[data-reach-jump]").forEach((el) => {
+      const pointer = el.dataset.reachJump;
+      if (!pointer) return;
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        reachJump(el.dataset.reachSide, pointer);
+      });
+    });
+  }
+
+  /** 从可达性审计条目跳到对应版本的引用树并定位到该指针。 */
+  async function reachJump(side, pointer) {
+    if (!state.review || !pointer) return;
+    state.tree.side = side;
+    $("#tree-side").value = side;
+    await loadPointers();
+    // 组件条目选其所在组件为树根；入口/路径类指针从根文档展开
+    const m = pointer.match(/^(\/components\/[^/]+\/[^/]+)/);
+    const rootPick = m ? m[1] : "";
+    $("#tree-pointer").value = rootPick;
+    state.tree.pointer = rootPick;
+    await loadTree(pointer);
+    if (window.matchMedia("(max-width: 1100px)").matches) {
+      $(".tree-col").scrollIntoView({ block: "start", behavior: "smooth" });
     }
   }
 
@@ -769,7 +987,9 @@
 
   function renderTree(tree, container, targetPointer) {
     container.innerHTML = "";
-    const nodeEl = renderTreeNode(tree, 0, true, targetPointer, []);
+    // 后端计算的根→目标节点名路径：沿路径逐层展开，保证深层目标可见
+    const targetPath = Array.isArray(tree.target_path) ? tree.target_path : [];
+    const nodeEl = renderTreeNode(tree, 0, true, targetPointer, targetPath);
     container.appendChild(nodeEl);
     // 滚动到目标节点
     const hit = container.querySelector(".tree-row.is-target");
@@ -785,8 +1005,9 @@
     const hasChildren = Array.isArray(node.children) && node.children.length > 0;
     const row = document.createElement("div");
     const circular = !!node.circular;
-    const onTargetPath = targetPath.includes(node.name) ||
-      (isRoot && depth === 0);
+    // 目标路径是节点名序列：当前节点匹配路径首元素才算在路径上，子节点消费剩余路径
+    const onTargetPath = targetPath.length > 0 && targetPath[0] === node.name;
+    const childPath = onTargetPath ? targetPath.slice(1) : [];
     row.className =
       `tree-row kind-${node.kind || "object"}` +
       (circular ? " circular" : "") +
@@ -844,7 +1065,7 @@
 
       node.children.forEach((child) => {
         childBox.appendChild(
-          renderTreeNode(child, depth + 1, false, targetPointer, targetPath)
+          renderTreeNode(child, depth + 1, false, targetPointer, childPath)
         );
       });
       wrap.appendChild(childBox);
@@ -893,7 +1114,7 @@
     await loadPointers();
 
     // 优先选目标所在的顶层组件分组（树更小、可读性好），否则从根展开
-    const m = normPointer.match(/^(\/components\/(?:schemas|parameters|requestBodies|responses|headers)\/[^/]+)/);
+    const m = normPointer.match(/^(\/components\/[^/]+\/[^/]+)/);
     const rootPick = m ? m[1] : "";
     $("#tree-pointer").value = rootPick;
     state.tree.pointer = rootPick;
